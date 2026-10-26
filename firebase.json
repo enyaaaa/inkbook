@@ -1,0 +1,25 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "inkbook-72b71",
+          "appId": "1:675269964727:android:e3fb6df668a15b26806e32",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "inkbook-72b71",
+          "configurations": {
+            "android": "1:675269964727:android:e3fb6df668a15b26806e32",
+            "web": "1:675269964727:web:2562f5062c726555806e32"
+          }
+        }
+      }
+    }
+  },
+  "firestore": {
+    "rules": "firestore.rules"
+  }
+}

@@ -1,0 +1,110 @@
+rules_version = '2';
+
+// Security rules for INKBOOK. Deploy with:
+//   firebase deploy --only firestore:rules
+//
+// Principles:
+// - Everyone must be signed in to an account (there are no guests).
+// - You can only read and write your own sketchbooks, pages and previews.
+// - Usernames are unique: a profile can only show a @username whose
+//   handles/{username} document belongs to that same user.
+// - Counters (likes, followers) can only move by exactly one per write.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isMe(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function onlyChanged(fields) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(fields);
+    }
+
+    function changedByOne(field) {
+      return request.resource.data[field] - resource.data[field] in [-1, 1];
+    }
+
+    function validProfile() {
+      let d = request.resource.data;
+      return d.name is string && d.name.size() > 0 && d.name.size() <= 60
+        && d.handle is string && d.handle.matches('^[a-z0-9._]{3,20}$')
+        && d.bio is string && d.bio.size() <= 160;
+    }
+
+    // True if [handle] is claimed by [uid] once this write lands.
+    function ownsHandle(handle, uid) {
+      return getAfter(/databases/$(database)/documents/handles/$(handle)).data.uid == uid;
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn();
+
+      allow create: if isMe(uid)
+        && validProfile()
+        && request.resource.data.followerCount == 0
+        && ownsHandle(request.resource.data.handle, uid);
+
+      // Owners edit their profile but cannot touch their follower count or
+      // take a username they have not claimed; anyone else can move
+      // someone's follower count by one (follow / unfollow).
+      allow update: if (isMe(uid) && validProfile()
+                         && request.resource.data.followerCount == resource.data.followerCount
+                         && (request.resource.data.handle == resource.data.handle
+                             || ownsHandle(request.resource.data.handle, uid)))
+                    || (signedIn() && !isMe(uid)
+                         && onlyChanged(['followerCount']) && changedByOne('followerCount'));
+
+      match /sketchbooks/{bookId} {
+        allow read, write: if isMe(uid);
+
+        match /pages/{pageId} {
+          allow read, write: if isMe(uid);
+        }
+      }
+
+      match /thumbs/{pageId} {
+        allow read, write: if isMe(uid);
+      }
+
+      match /likes/{artworkId} {
+        allow read, write: if isMe(uid);
+      }
+
+      match /following/{artistId} {
+        allow read: if signedIn();
+        allow write: if isMe(uid) && artistId != uid;
+      }
+    }
+
+    // One document per @username, so usernames are unique. A claim can be
+    // created (only if nobody holds it - creates fail on existing docs) or
+    // given up by its owner, never edited or taken over.
+    match /handles/{handle} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['uid'])
+        && request.resource.data.uid == request.auth.uid
+        && handle.matches('^[a-z0-9._]{3,20}$');
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /artworks/{artworkId} {
+      allow read: if signedIn();
+
+      allow create: if signedIn()
+        && request.resource.data.artistId == request.auth.uid
+        && request.resource.data.likeCount == 0
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 120;
+
+      allow update: if signedIn()
+        && onlyChanged(['likeCount']) && changedByOne('likeCount');
+
+      allow delete: if signedIn() && resource.data.artistId == request.auth.uid;
+    }
+  }
+}

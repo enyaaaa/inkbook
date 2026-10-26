@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "675269964727",
+    "project_id": "inkbook-72b71",
+    "storage_bucket": "inkbook-72b71.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:675269964727:android:e3fb6df668a15b26806e32",
+        "android_client_info": {
+          "package_name": "com.enya.inkbook"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "675269964727-l41srl2h454ba5ao063qrjndqk2l63pi.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDQoTFGTBSZdzU160YOI5sUnZrapg4PR_4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "675269964727-l41srl2h454ba5ao063qrjndqk2l63pi.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "675269964727-uch5eri531ro2d4g2v02rggqjtejvrfk.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.enya.inkbook"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,41 @@
+name: inkbook
+description: >-
+  INKBOOK - An interactive digital sketchbook for creative expression and
+  exploration. Final Year Project prototype (Flutter, tablet-first).
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+# NOTE: This prototype deliberately uses ZERO third-party packages so that it
+# builds and runs offline with only the Flutter SDK. See README.md ->
+# "Where to plug in Firebase / the AI API" for the intended swap points.
+dependencies:
+  flutter:
+    sdk: flutter
+  firebase_core: ^4.15.0
+  firebase_auth: ^6.7.0
+  cloud_firestore: ^6.10.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+
+  # Open Font License fonts from github.com/google/fonts (licences alongside).
+  # Bundled rather than fetched so the app still works fully offline.
+  fonts:
+    - family: Playfair Display
+      fonts:
+        - asset: assets/fonts/PlayfairDisplay.ttf
+        - asset: assets/fonts/PlayfairDisplay-Italic.ttf
+          style: italic
+    - family: Caveat
+      fonts:
+        - asset: assets/fonts/Caveat.ttf
+    - family: DM Sans
+      fonts:
+        - asset: assets/fonts/DMSans.ttf

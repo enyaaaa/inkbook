@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CLIENT_ID</key>
+	<string>675269964727-uch5eri531ro2d4g2v02rggqjtejvrfk.apps.googleusercontent.com</string>
+	<key>REVERSED_CLIENT_ID</key>
+	<string>com.googleusercontent.apps.675269964727-uch5eri531ro2d4g2v02rggqjtejvrfk</string>
+	<key>API_KEY</key>
+	<string>AIzaSyA6edCIQFU-73vwzEm3MRZJazbEFj-WAyc</string>
+	<key>GCM_SENDER_ID</key>
+	<string>675269964727</string>
+	<key>PLIST_VERSION</key>
+	<string>1</string>
+	<key>BUNDLE_ID</key>
+	<string>com.enya.inkbook</string>
+	<key>PROJECT_ID</key>
+	<string>inkbook-72b71</string>
+	<key>STORAGE_BUCKET</key>
+	<string>inkbook-72b71.firebasestorage.app</string>
+	<key>IS_ADS_ENABLED</key>
+	<false></false>
+	<key>IS_ANALYTICS_ENABLED</key>
+	<false></false>
+	<key>IS_APPINVITE_ENABLED</key>
+	<true></true>
+	<key>IS_GCM_ENABLED</key>
+	<true></true>
+	<key>IS_SIGNIN_ENABLED</key>
+	<true></true>
+	<key>GOOGLE_APP_ID</key>
+	<string>1:675269964727:ios:220888671cd6dd60806e32</string>
+</dict>
+</plist>
