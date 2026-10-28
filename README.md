@@ -100,6 +100,23 @@ pointer speed — slow strokes go thick, fast strokes thin, which is how a real
 pen behaves. Output is exponentially smoothed so width never jumps between
 samples.
 
+## Drawing engine
+
+- **Pressure**: real pen pressure from any device that sends it (including
+  pens mirrored as a "mouse" by Sidecar-style apps); otherwise simulated from
+  speed. The bar under the page shows what the input is sending.
+- **Pencil** (`screens/draw/widgets/canvas_painters.dart`): stamped graphite
+  dabs whose size and darkness follow per-point pressure, wider and softer
+  with stylus tilt, masked by a generated paper grain
+  (`utils/pencil_texture.dart`). Finished strokes are cached as a picture.
+- **Vector tools**: strokes are stored as points (with pressure and tilt), so
+  they can be edited. Shape tool (line / rectangle / ellipse), hold-to-snap
+  freehand into perfect shapes (`utils/shapes.dart`), and a lasso to move,
+  resize, rotate, recolour, duplicate or delete. Every edit is undoable.
+- **Offline / test mode**: `flutter run -d chrome
+  --dart-define=INKBOOK_OFFLINE=true` skips Firebase and uses sample data.
+- **Tests**: `flutter test` (shape recognition).
+
 ## Backend (Firebase)
 
 Project `inkbook-72b71`, Firestore in `asia-southeast1`, free Spark plan.

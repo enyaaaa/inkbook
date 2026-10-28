@@ -37,13 +37,22 @@ class PressureNormaliser {
   Offset? _lastPosition;
   Duration? _lastTimestamp;
   bool _deviceSupportsPressure = false;
+  double _rawPressure = 0;
+  PointerDeviceKind _kind = PointerDeviceKind.unknown;
 
   /// True when the current pointer actually reported analogue pressure.
   /// The UI surfaces this so the user knows whether their stylus is working.
   bool get deviceSupportsPressure => _deviceSupportsPressure;
 
+  /// What the platform says the pointer is, and the last raw pressure it
+  /// sent - shown in the drawing screen so input problems are diagnosable.
+  PointerDeviceKind get kind => _kind;
+  double get rawPressure => _rawPressure;
+
   /// Call at pointer-down to reset per-stroke state.
   void begin(PointerDownEvent event) {
+    _kind = event.kind;
+    _rawPressure = event.pressure;
     _deviceSupportsPressure = _hasRealPressure(event);
     _lastPosition = event.localPosition;
     _lastTimestamp = event.timeStamp;
@@ -52,6 +61,7 @@ class PressureNormaliser {
 
   /// Call for every move event; returns the pressure to store on the point.
   double update(PointerEvent event) {
+    _rawPressure = event.pressure;
     final double target;
     if (_deviceSupportsPressure || _hasRealPressure(event)) {
       _deviceSupportsPressure = true;
@@ -73,14 +83,24 @@ class PressureNormaliser {
     _lastTimestamp = null;
   }
 
+  /// A stylus with a pressure range is the obvious case. But mirrored or
+  /// remote screens (Sidecar, Duet, scrcpy...) often deliver a pen as a
+  /// *mouse* that still carries real pressure - so any pointer whose
+  /// pressure sits strictly between 0 and 1, and is not the 0.5 that
+  /// browsers report for "pressed, pressure unknown", counts too.
   static bool _hasRealPressure(PointerEvent event) {
     final range = event.pressureMax - event.pressureMin;
-    return range > 0.01 && event.kind == PointerDeviceKind.stylus;
+    if (event.kind == PointerDeviceKind.stylus ||
+        event.kind == PointerDeviceKind.invertedStylus) {
+      return range > 0.01;
+    }
+    final p = event.pressure;
+    return p > 0.001 && p < 0.999 && (p - 0.5).abs() > 0.001;
   }
 
   static double _raw(PointerEvent event) {
     final range = event.pressureMax - event.pressureMin;
-    if (range <= 0.01) return 0.5;
+    if (range <= 0.01) return event.pressure.clamp(0.0, 1.0);
     return ((event.pressure - event.pressureMin) / range).clamp(0.0, 1.0);
   }
 

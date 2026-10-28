@@ -9,10 +9,13 @@ import 'screens/home_shell.dart';
 import 'services/firebase_auth_service.dart';
 import 'services/firestore_storage_service.dart';
 import 'theme/app_theme.dart';
+import 'utils/pencil_texture.dart';
 import 'widgets/scrapbook.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // The paper grain pencil strokes are textured with (generated, ~5 ms).
+  await PencilGrain.load();
   runApp(InkbookApp(state: await _createState()));
 }
 
@@ -20,6 +23,10 @@ Future<void> main() async {
 /// back to the in-memory services so the app still runs (e.g. on macOS,
 /// which has no Firebase config yet).
 Future<AppState> _createState() async {
+  // `flutter run --dart-define=INKBOOK_OFFLINE=true` skips Firebase and runs
+  // on local sample data - for demos without internet, and for testing
+  // without creating accounts.
+  if (const bool.fromEnvironment('INKBOOK_OFFLINE')) return AppState();
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,

@@ -1,8 +1,13 @@
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 
+import '../../../models/brush.dart';
 import '../../../models/sketchbook.dart';
 import '../../../models/stroke.dart';
 import '../../../theme/app_theme.dart';
+import '../../../utils/pencil_texture.dart';
 import '../../../utils/stroke_geometry.dart';
 
 /// Paints the paper itself: colour, grid or rule lines, and a subtle inner
@@ -147,16 +152,146 @@ class BoardPaperPainter extends CustomPainter {
       oldDelegate.zoom != zoom;
 }
 
-/// Paints a list of strokes with pressure-driven width and opacity.
+/// Remembers the finished strokes as a recorded [ui.Picture], so drawing a
+/// new stroke only has to build that one stroke - not re-tessellate every
+/// stroke on the page on every pointer move. Owned by the canvas widget.
+class StrokeCache {
+  ui.Picture? _picture;
+  int _revision = -1;
+  List<Stroke>? _strokes;
+
+  ui.Picture picture(List<Stroke> strokes, int revision) {
+    final cached = _picture;
+    if (cached != null &&
+        _revision == revision &&
+        identical(_strokes, strokes)) {
+      return cached;
+    }
+    cached?.dispose();
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    for (final stroke in strokes) {
+      paintStroke(canvas, stroke);
+    }
+    _revision = revision;
+    _strokes = strokes;
+    return _picture = recorder.endRecording();
+  }
+
+  void dispose() {
+    _picture?.dispose();
+    _picture = null;
+  }
+}
+
+/// Paints one stroke. Pencil strokes are graphite (stamped, pressure and
+/// tilt shaded, paper grain); ink and marker are smooth filled outlines.
 ///
-/// Eraser strokes are drawn with [BlendMode.clear] inside a `saveLayer`, which
-/// removes ink rather than painting paper-coloured strokes over it - so the
-/// paper texture and grid stay visible underneath.
+/// Eraser strokes use [BlendMode.clear], which removes ink rather than
+/// painting paper-coloured strokes over it - so the paper texture and grid
+/// stay visible underneath.
+void paintStroke(Canvas canvas, Stroke stroke) {
+  if (stroke.isEmpty) return;
+  if (stroke.brush.type == BrushType.pencil) {
+    _paintPencil(canvas, stroke);
+    return;
+  }
+
+  final outline = StrokeGeometry.buildOutline(stroke);
+  final averagePressure =
+      stroke.points.map((p) => p.pressure).reduce((a, b) => a + b) /
+          stroke.points.length;
+
+  final paint = Paint()
+    ..isAntiAlias = true
+    ..style = PaintingStyle.fill;
+
+  if (stroke.isEraser) {
+    paint
+      ..blendMode = BlendMode.clear
+      ..color = const Color(0xFF000000);
+  } else {
+    final opacity = StrokeGeometry.opacityAt(stroke.brush, averagePressure);
+    paint.color = stroke.brush.color.withAlpha((opacity * 255).round());
+  }
+  canvas.drawPath(outline, paint);
+}
+
+/// Graphite. The stroke is laid down as many small overlapping dabs along
+/// the centre line:
+///
+/// - each dab's size and darkness come from the pressure at that point, so
+///   one stroke can go from a whisper to a hard line;
+/// - tilting the stylus widens and softens the dab, like shading with the
+///   side of the lead;
+/// - dabs build up where they overlap, so going back over an area darkens
+///   it, as graphite does;
+/// - the result is masked by [PencilGrain], so light pressure only catches
+///   the paper's raised tooth.
+void _paintPencil(Canvas canvas, Stroke stroke) {
+  final brush = stroke.brush;
+  final points = stroke.points;
+  final bounds = stroke.bounds.inflate(brush.size * 2 + 4);
+
+  canvas.saveLayer(bounds, Paint());
+  final dab = Paint()..isAntiAlias = true;
+
+  // About this many dabs overlap at any spot on the centre line; each dab's
+  // alpha is chosen so that together they reach the target darkness.
+  const overlap = 5.0;
+
+  void stamp(StrokePoint p) {
+    final tilt = (p.tilt / (math.pi / 2)).clamp(0.0, 1.0);
+    final radius = math.max(
+      StrokeGeometry.halfWidthAt(brush, p.pressure) * (1 + 2.2 * tilt),
+      0.45,
+    );
+    final target =
+        StrokeGeometry.opacityAt(brush, p.pressure) * (1 - 0.5 * tilt);
+    final alpha = 1 - math.pow(1 - target.clamp(0.0, 0.999), 1 / overlap);
+    dab.color = brush.color.withAlpha((alpha * 255).round().clamp(1, 255));
+    canvas.drawCircle(p.offset, radius, dab);
+  }
+
+  stamp(points.first);
+  for (var i = 1; i < points.length; i++) {
+    final a = points[i - 1];
+    final b = points[i];
+    final distance = (b.offset - a.offset).distance;
+    final radius =
+        math.max(StrokeGeometry.halfWidthAt(brush, b.pressure), 0.45);
+    final spacing = math.max(radius * 2 / overlap, 0.5);
+    final steps = math.max(1, (distance / spacing).ceil());
+    for (var k = 1; k <= steps; k++) {
+      stamp(a.lerpTo(b, k / steps));
+    }
+  }
+
+  final grain = PencilGrain.image;
+  if (grain != null) {
+    canvas.drawRect(
+      bounds,
+      Paint()
+        ..blendMode = BlendMode.dstIn
+        ..shader = ImageShader(
+          grain,
+          TileMode.repeated,
+          TileMode.repeated,
+          Matrix4.identity().storage,
+        ),
+    );
+  }
+  canvas.restore();
+}
+
+/// Paints the page's strokes plus the one being drawn. Finished strokes
+/// come from [cache]; only the live stroke is built each frame.
 class StrokePainter extends CustomPainter {
-  const StrokePainter({
+  StrokePainter({
     required this.strokes,
     required this.revision,
     required this.liveVersion,
+    required this.cache,
     this.liveStroke,
     this.pan = Offset.zero,
     this.zoom = 1,
@@ -169,6 +304,7 @@ class StrokePainter extends CustomPainter {
 
   final List<Stroke> strokes;
   final Stroke? liveStroke;
+  final StrokeCache cache;
 
   /// Changes whenever [strokes] is mutated, so the painter knows to repaint.
   final int revision;
@@ -186,46 +322,10 @@ class StrokePainter extends CustomPainter {
     canvas.saveLayer(Offset.zero & size, Paint());
     canvas.translate(pan.dx, pan.dy);
     canvas.scale(zoom);
-    // Skip strokes entirely off screen - matters on a big whiteboard.
-    final visible = Rect.fromLTWH(
-      -pan.dx / zoom,
-      -pan.dy / zoom,
-      size.width / zoom,
-      size.height / zoom,
-    );
-    for (final stroke in strokes) {
-      if (zoom != 1 || pan != Offset.zero) {
-        if (!stroke.bounds.overlaps(visible)) continue;
-      }
-      _paintStroke(canvas, stroke);
-    }
+    canvas.drawPicture(cache.picture(strokes, revision));
     final live = liveStroke;
-    if (live != null) _paintStroke(canvas, live);
+    if (live != null) paintStroke(canvas, live);
     canvas.restore();
-  }
-
-  void _paintStroke(Canvas canvas, Stroke stroke) {
-    if (stroke.isEmpty) return;
-    final outline = StrokeGeometry.buildOutline(stroke);
-    final averagePressure = stroke.points.isEmpty
-        ? 0.5
-        : stroke.points.map((p) => p.pressure).reduce((a, b) => a + b) /
-            stroke.points.length;
-
-    final paint = Paint()
-      ..isAntiAlias = true
-      ..style = PaintingStyle.fill;
-
-    if (stroke.isEraser) {
-      paint
-        ..blendMode = BlendMode.clear
-        ..color = const Color(0xFF000000);
-    } else {
-      final opacity = StrokeGeometry.opacityAt(stroke.brush, averagePressure);
-      paint.color = stroke.brush.color.withAlpha((opacity * 255).round());
-    }
-
-    canvas.drawPath(outline, paint);
   }
 
   @override
@@ -234,5 +334,6 @@ class StrokePainter extends CustomPainter {
       oldDelegate.liveVersion != liveVersion ||
       oldDelegate.pan != pan ||
       oldDelegate.zoom != zoom ||
+      !identical(oldDelegate.strokes, strokes) ||
       !identical(oldDelegate.liveStroke, liveStroke);
 }

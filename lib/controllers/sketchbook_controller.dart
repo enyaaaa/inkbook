@@ -1,4 +1,5 @@
-import 'dart:ui' show Color;
+import 'dart:math' as math;
+import 'dart:ui' show Color, Offset, Rect;
 
 import 'package:flutter/foundation.dart';
 
@@ -7,6 +8,7 @@ import '../models/sketch_page.dart';
 import '../models/sketchbook.dart';
 import '../models/stroke.dart';
 import '../services/storage_service.dart';
+import '../utils/shapes.dart';
 
 /// Owns the user's sketchbooks and all editing of the page currently open.
 ///
@@ -48,7 +50,31 @@ class SketchbookController extends ChangeNotifier {
   bool _stylusDetected = false;
   bool get stylusDetected => _stylusDetected;
 
-  final Map<String, List<Stroke>> _redoStacks = <String, List<Stroke>>{};
+  // Undo / redo, per page (a sketchbook's pages have separate histories).
+  final Map<String, List<_Edit>> _undo = <String, List<_Edit>>{};
+  final Map<String, List<_Edit>> _redo = <String, List<_Edit>>{};
+
+  // --- tools ---------------------------------------------------------------
+
+  CanvasTool _tool = CanvasTool.draw;
+  CanvasTool get tool => _tool;
+
+  ShapeKind _shape = ShapeKind.ellipse;
+  ShapeKind get shape => _shape;
+
+  /// Strokes picked with the lasso, by identity.
+  final Set<Stroke> _selection = <Stroke>{};
+  Set<Stroke> get selection => Set<Stroke>.unmodifiable(_selection);
+  bool get hasSelection => _selection.isNotEmpty;
+
+  /// Set briefly after hold-to-snap so the UI can say what it became.
+  ShapeKind? _lastSnap;
+  ShapeKind? get lastSnap => _lastSnap;
+
+  /// What the input device reported last - shown in the drawing screen so
+  /// it is obvious whether real pen pressure is coming through.
+  String _inputLabel = '';
+  String get inputLabel => _inputLabel;
 
   // --- loading -------------------------------------------------------------
 
@@ -57,7 +83,9 @@ class SketchbookController extends ChangeNotifier {
     _open = null;
     _pageIndex = 0;
     _liveStroke = null;
-    _redoStacks.clear();
+    _undo.clear();
+    _redo.clear();
+    _selection.clear();
     notifyListeners();
     try {
       final books = await _storage.loadSketchbooks();
@@ -155,6 +183,7 @@ class SketchbookController extends ChangeNotifier {
     if (clamped == _pageIndex) return;
     _pageIndex = clamped;
     _liveStroke = null;
+    _selection.clear();
     _committedRevision++;
     notifyListeners();
   }
@@ -230,6 +259,27 @@ class SketchbookController extends ChangeNotifier {
   void setOpacity(double opacity) =>
       setBrush(_brush.copyWith(opacity: opacity));
 
+  // --- tools -----------------------------------------------------------------
+
+  void setTool(CanvasTool tool) {
+    if (tool == _tool) return;
+    _tool = tool;
+    if (tool != CanvasTool.select) _selection.clear();
+    notifyListeners();
+  }
+
+  void setShape(ShapeKind shape) {
+    _shape = shape;
+    _tool = CanvasTool.shape;
+    _selection.clear();
+    notifyListeners();
+  }
+
+  void reportInput(String label) {
+    // Updated alongside stroke points, which already notify listeners.
+    _inputLabel = label;
+  }
+
   // --- drawing -------------------------------------------------------------
 
   /// [sizeScale] lets the infinite whiteboard keep the brush the same size
@@ -241,6 +291,7 @@ class SketchbookController extends ChangeNotifier {
   }) {
     if (currentPage == null) return;
     if (fromStylus && !_stylusDetected) _stylusDetected = true;
+    _lastSnap = null;
     _liveStroke = Stroke(
       brush: sizeScale == 1
           ? _brush
@@ -257,6 +308,33 @@ class SketchbookController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Shape tool: replaces the live stroke with a clean [shape] dragged from
+  /// [from] to [to].
+  void shapeTo(Offset from, Offset to) {
+    final stroke = _liveStroke;
+    if (stroke == null) return;
+    stroke.points
+      ..clear()
+      ..addAll(Shapes.build(_shape, from, to));
+    notifyListeners();
+  }
+
+  /// Hold-to-snap: if the live freehand stroke looks like a line, ellipse or
+  /// rectangle, make it a perfect one. Returns true if it snapped.
+  bool snapLiveStroke() {
+    final stroke = _liveStroke;
+    if (stroke == null || stroke.isEraser) return false;
+    final result = Shapes.recognise(stroke);
+    if (result == null) return false;
+    final (kind, points) = result;
+    stroke.points
+      ..clear()
+      ..addAll(points);
+    _lastSnap = kind;
+    notifyListeners();
+    return true;
+  }
+
   void endStroke() {
     final stroke = _liveStroke;
     final page = currentPage;
@@ -266,11 +344,10 @@ class SketchbookController extends ChangeNotifier {
       return;
     }
     page.strokes.add(stroke);
-    _redoStacks.remove(page.id);
+    _record(page, _AddStroke(stroke));
     _committedRevision++;
     notifyListeners();
-    final book = _open;
-    if (book != null) unawaitedSave(book);
+    _saveOpen();
   }
 
   void cancelStroke() {
@@ -278,40 +355,197 @@ class SketchbookController extends ChangeNotifier {
     notifyListeners();
   }
 
-  // --- history -------------------------------------------------------------
+  // --- selection (lasso) ---------------------------------------------------
 
-  bool get canUndo => (currentPage?.strokes.isNotEmpty ?? false);
-  bool get canRedo => (_redoStacks[currentPage?.id ?? '']?.isNotEmpty ?? false);
-
-  void undo() {
+  /// Selects every stroke with most of its points inside [lasso] (a closed
+  /// polygon in page coordinates).
+  void selectWithin(List<Offset> lasso) {
     final page = currentPage;
-    if (page == null || page.strokes.isEmpty) return;
-    final stroke = page.strokes.removeLast();
-    (_redoStacks[page.id] ??= <Stroke>[]).add(stroke);
+    _selection.clear();
+    if (page == null || lasso.length < 3) {
+      notifyListeners();
+      return;
+    }
+    for (final stroke in page.strokes) {
+      if (stroke.isEraser || stroke.isEmpty) continue;
+      var inside = 0;
+      for (final p in stroke.points) {
+        if (_pointInPolygon(p.offset, lasso)) inside++;
+      }
+      if (inside >= stroke.points.length * 0.6) _selection.add(stroke);
+    }
+    notifyListeners();
+  }
+
+  void clearSelection() {
+    if (_selection.isEmpty) return;
+    _selection.clear();
+    notifyListeners();
+  }
+
+  /// Bounding box of the selection in page coordinates.
+  Rect? get selectionBounds {
+    if (_selection.isEmpty) return null;
+    Rect? box;
+    for (final stroke in _selection) {
+      box = box == null ? stroke.bounds : box.expandToInclude(stroke.bounds);
+    }
+    return box;
+  }
+
+  /// Call once before a move / scale / rotate gesture so it can be undone.
+  void beginTransform() {
+    final page = currentPage;
+    if (page == null || _selection.isEmpty) return;
+    _record(page, _Snapshot.of(page.strokes));
+  }
+
+  void moveSelection(Offset delta) => _transformSelection((p) => p + delta);
+
+  /// Scales the selection by [factor] around [anchor].
+  void scaleSelection(double factor, Offset anchor) => _transformSelection(
+        (p) => anchor + (p - anchor) * factor,
+        sizeScale: factor,
+      );
+
+  /// Rotates the selection by [radians] around [centre].
+  void rotateSelection(double radians, Offset centre) {
+    final c = math.cos(radians);
+    final s = math.sin(radians);
+    _transformSelection((p) {
+      final v = p - centre;
+      return centre + Offset(v.dx * c - v.dy * s, v.dx * s + v.dy * c);
+    });
+  }
+
+  void _transformSelection(
+    Offset Function(Offset) transform, {
+    double sizeScale = 1,
+  }) {
+    if (_selection.isEmpty) return;
+    for (final stroke in _selection) {
+      stroke.transformBy(transform, sizeScale: sizeScale);
+    }
+    _committedRevision++;
+    notifyListeners();
+  }
+
+  /// Ends a move / scale / rotate gesture and saves.
+  void endTransform() => _saveOpen();
+
+  void deleteSelection() {
+    final page = currentPage;
+    if (page == null || _selection.isEmpty) return;
+    _record(page, _Snapshot.of(page.strokes));
+    page.strokes.removeWhere(_selection.contains);
+    _selection.clear();
     _committedRevision++;
     notifyListeners();
     _saveOpen();
+  }
+
+  /// Copies the selection, offset slightly, and selects the copies.
+  void duplicateSelection() {
+    final page = currentPage;
+    if (page == null || _selection.isEmpty) return;
+    _record(page, _Snapshot.of(page.strokes));
+    final copies = <Stroke>[
+      for (final stroke in page.strokes)
+        if (_selection.contains(stroke))
+          stroke.copy()..transformBy((p) => p + const Offset(24, 24)),
+    ];
+    page.strokes.addAll(copies);
+    _selection
+      ..clear()
+      ..addAll(copies);
+    _committedRevision++;
+    notifyListeners();
+    _saveOpen();
+  }
+
+  /// Gives the selection the current brush colour.
+  void recolourSelection() {
+    final page = currentPage;
+    if (page == null || _selection.isEmpty) return;
+    _record(page, _Snapshot.of(page.strokes));
+    for (final stroke in _selection) {
+      stroke.brush = stroke.brush.copyWith(color: _brush.color);
+    }
+    _committedRevision++;
+    notifyListeners();
+    _saveOpen();
+  }
+
+  static bool _pointInPolygon(Offset p, List<Offset> polygon) {
+    var inside = false;
+    for (var i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      final a = polygon[i];
+      final b = polygon[j];
+      if ((a.dy > p.dy) != (b.dy > p.dy) &&
+          p.dx < (b.dx - a.dx) * (p.dy - a.dy) / (b.dy - a.dy) + a.dx) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+
+  // --- history -------------------------------------------------------------
+  //
+  // One undo stack per page. Most edits are "added a stroke", which is cheap
+  // to undo; anything that changes existing strokes (clear, delete, move,
+  // scale, rotate, recolour, duplicate) stores a snapshot of the page first.
+
+  void _record(SketchPage page, _Edit edit) {
+    (_undo[page.id] ??= <_Edit>[]).add(edit);
+    _redo.remove(page.id);
+  }
+
+  bool get canUndo {
+    final page = currentPage;
+    if (page == null) return false;
+    // Strokes loaded from storage have no history but can still be undone
+    // one at a time, newest first.
+    return (_undo[page.id]?.isNotEmpty ?? false) || page.strokes.isNotEmpty;
+  }
+
+  bool get canRedo => _redo[currentPage?.id ?? '']?.isNotEmpty ?? false;
+
+  bool get hasStrokes => currentPage?.strokes.isNotEmpty ?? false;
+
+  void undo() {
+    final page = currentPage;
+    if (page == null) return;
+    final stack = _undo[page.id];
+    final edit = (stack == null || stack.isEmpty)
+        ? (page.strokes.isEmpty ? null : _AddStroke(page.strokes.last))
+        : stack.removeLast();
+    if (edit == null) return;
+    (_redo[page.id] ??= <_Edit>[]).add(edit.undo(page));
+    _afterHistory();
   }
 
   void redo() {
     final page = currentPage;
     if (page == null) return;
-    final stack = _redoStacks[page.id];
+    final stack = _redo[page.id];
     if (stack == null || stack.isEmpty) return;
-    page.strokes.add(stack.removeLast());
-    _committedRevision++;
-    notifyListeners();
-    _saveOpen();
+    (_undo[page.id] ??= <_Edit>[]).add(stack.removeLast().undo(page));
+    _afterHistory();
   }
 
   void clearPage() {
     final page = currentPage;
     if (page == null || page.strokes.isEmpty) return;
-    final removed = List<Stroke>.of(page.strokes);
+    _record(page, _Snapshot.of(page.strokes));
     page.strokes.clear();
-    // Clearing is undoable one stroke at a time, which matches how users
-    // expect undo to behave after a destructive action.
-    (_redoStacks[page.id] ??= <Stroke>[]).addAll(removed);
+    _selection.clear();
+    _committedRevision++;
+    notifyListeners();
+    _saveOpen();
+  }
+
+  void _afterHistory() {
+    _selection.removeWhere((s) => !(currentPage?.strokes.contains(s) ?? false));
     _committedRevision++;
     notifyListeners();
     _saveOpen();
@@ -328,5 +562,68 @@ class SketchbookController extends ChangeNotifier {
   void _saveOpen() {
     final book = _open;
     if (book != null) unawaitedSave(book);
+  }
+}
+
+/// What the canvas does with a pointer.
+enum CanvasTool {
+  /// Freehand with the current brush (hold still at the end to snap).
+  draw,
+
+  /// Drag out a clean line, rectangle or ellipse.
+  shape,
+
+  /// Lasso strokes, then move / scale / rotate / recolour / delete them.
+  select,
+}
+
+/// One undoable change. [undo] reverts it on [page] and returns the edit
+/// that would re-apply it, so the same type serves undo and redo.
+abstract class _Edit {
+  _Edit undo(SketchPage page);
+}
+
+/// A stroke was added (undo removes it; redo adds it back).
+class _AddStroke extends _Edit {
+  _AddStroke(this.stroke);
+
+  final Stroke stroke;
+
+  @override
+  _Edit undo(SketchPage page) {
+    page.strokes.remove(stroke);
+    return _RemoveStroke(stroke);
+  }
+}
+
+class _RemoveStroke extends _Edit {
+  _RemoveStroke(this.stroke);
+
+  final Stroke stroke;
+
+  @override
+  _Edit undo(SketchPage page) {
+    page.strokes.add(stroke);
+    return _AddStroke(stroke);
+  }
+}
+
+/// The whole page as it was before an edit. Strokes are deep-copied because
+/// transforms change them in place.
+class _Snapshot extends _Edit {
+  _Snapshot(this.strokes);
+
+  _Snapshot.of(List<Stroke> current)
+      : strokes = <Stroke>[for (final s in current) s.copy()];
+
+  final List<Stroke> strokes;
+
+  @override
+  _Edit undo(SketchPage page) {
+    final now = _Snapshot.of(page.strokes);
+    page.strokes
+      ..clear()
+      ..addAll(strokes.map((s) => s.copy()));
+    return now;
   }
 }

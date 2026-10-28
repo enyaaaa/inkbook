@@ -1,9 +1,14 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../../controllers/sketchbook_controller.dart';
 import '../../../models/brush.dart';
+import '../../../models/stroke.dart';
 import '../../../theme/app_theme.dart';
+import '../../../utils/shapes.dart';
 import '../../../utils/stroke_geometry.dart';
+import 'canvas_painters.dart';
 
 /// The dark tool tray along the bottom of the canvas, after Paper by
 /// FiftyThree: colour swatches, the tools drawn as real objects (the
@@ -29,11 +34,35 @@ class ToolTray extends StatelessWidget {
         const SizedBox(width: 26),
         for (final type in BrushType.values)
           _Tool(
-            type: type,
-            ink: brush.color,
-            selected: brush.type == type,
-            onTap: () => controller.setBrushType(type),
+            label: type.label,
+            selected: controller.tool == CanvasTool.draw && brush.type == type,
+            painter: _ToolPainter(
+              type,
+              brush.color,
+              controller.tool == CanvasTool.draw && brush.type == type,
+            ),
+            onTap: () {
+              controller.setBrushType(type);
+              controller.setTool(CanvasTool.draw);
+            },
           ),
+        const SizedBox(width: 10),
+        _Tool(
+          label: 'Shapes (${controller.shape.label.toLowerCase()})',
+          selected: controller.tool == CanvasTool.shape,
+          painter: _StencilPainter(controller.shape),
+          onTap: () => controller.setTool(CanvasTool.shape),
+        ),
+        _Tool(
+          label: 'Select - lasso strokes to move, resize, rotate',
+          selected: controller.tool == CanvasTool.select,
+          painter: const _LassoPainter(),
+          onTap: () => controller.setTool(CanvasTool.select),
+        ),
+        if (controller.tool == CanvasTool.shape) ...<Widget>[
+          const SizedBox(width: 6),
+          _ShapeChoices(controller: controller),
+        ],
         const SizedBox(width: 26),
         _BrushPreview(brush: brush),
         const SizedBox(width: 14),
@@ -89,21 +118,21 @@ class ToolTray extends StatelessWidget {
 
 class _Tool extends StatelessWidget {
   const _Tool({
-    required this.type,
-    required this.ink,
+    required this.label,
     required this.selected,
+    required this.painter,
     required this.onTap,
   });
 
-  final BrushType type;
-  final Color ink;
+  final String label;
   final bool selected;
+  final CustomPainter painter;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: type.label,
+      message: label,
       child: GestureDetector(
         onTap: onTap,
         child: SizedBox(
@@ -119,7 +148,7 @@ class _Tool extends StatelessWidget {
                 right: 9,
                 top: selected ? 6 : 30,
                 height: 140,
-                child: CustomPaint(painter: _ToolPainter(type, ink, selected)),
+                child: CustomPaint(painter: painter),
               ),
             ],
           ),
@@ -286,6 +315,115 @@ class _ToolPainter extends CustomPainter {
       oldDelegate.selected != selected;
 }
 
+/// The shape tool: a drawing stencil with line, square and circle cut-outs.
+class _StencilPainter extends CustomPainter {
+  const _StencilPainter(this.shape);
+
+  final ShapeKind shape;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final body =
+        RRect.fromLTRBR(2, 4, w - 2, size.height, const Radius.circular(6));
+    canvas.drawRRect(body, Paint()..color = InkbookColors.folderLavender);
+    canvas.drawRect(
+      Rect.fromLTWH(w - 8, 10, 6, size.height),
+      Paint()..color = Colors.black.withAlpha(35),
+    );
+    final hole = Paint()..color = InkbookColors.tray;
+    final active = Paint()..color = InkbookColors.folderCream;
+    final cx = w / 2;
+    // Circle, square and slot cut-outs; the current shape's is lit.
+    canvas.drawCircle(
+        Offset(cx, 22), 9, shape == ShapeKind.ellipse ? active : hole);
+    canvas.drawRect(
+      Rect.fromCenter(center: Offset(cx, 46), width: 16, height: 16),
+      shape == ShapeKind.rectangle ? active : hole,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(center: Offset(cx, 68), width: 26, height: 5),
+        const Radius.circular(3),
+      ),
+      shape == ShapeKind.line ? active : hole,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_StencilPainter oldDelegate) => oldDelegate.shape != shape;
+}
+
+/// The select tool: a loop of rope (a lasso) on a handle.
+class _LassoPainter extends CustomPainter {
+  const _LassoPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    canvas.drawRRect(
+      RRect.fromLTRBR(
+          w * 0.38, 40, w * 0.62, size.height, const Radius.circular(3)),
+      Paint()..color = InkbookColors.toolBrown,
+    );
+    final rope = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round
+      ..color = InkbookColors.toolYellow;
+    canvas.drawOval(Rect.fromLTWH(4, 2, w - 8, 30), rope);
+    canvas.drawLine(Offset(w * 0.5, 32), Offset(w * 0.5, 42), rope);
+  }
+
+  @override
+  bool shouldRepaint(_LassoPainter oldDelegate) => false;
+}
+
+/// Line / rectangle / ellipse buttons, shown while the shape tool is on.
+class _ShapeChoices extends StatelessWidget {
+  const _ShapeChoices({required this.controller});
+
+  final SketchbookController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget choice(ShapeKind kind, IconData icon) {
+      final on = controller.shape == kind;
+      return Tooltip(
+        message: kind.label,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => controller.setShape(kind),
+          child: Container(
+            width: 34,
+            height: 30,
+            margin: const EdgeInsets.symmetric(vertical: 2),
+            decoration: BoxDecoration(
+              color:
+                  on ? InkbookColors.folderCream : Colors.white.withAlpha(20),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              icon,
+              size: 18,
+              color: on ? InkbookColors.ink : InkbookColors.folderCream,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: <Widget>[
+        choice(ShapeKind.line, Icons.horizontal_rule),
+        choice(ShapeKind.rectangle, Icons.crop_square),
+        choice(ShapeKind.ellipse, Icons.circle_outlined),
+      ],
+    );
+  }
+}
+
 /// Shows how the current brush responds to pressure, from light on the left
 /// to full pressure on the right.
 class _BrushPreview extends StatelessWidget {
@@ -315,27 +453,33 @@ class _PreviewPainter extends CustomPainter {
       Paint()..color = InkbookColors.paper,
     );
 
-    final path = Path();
-    const steps = 24;
-    final top = <Offset>[];
-    final bottom = <Offset>[];
-    for (var i = 0; i <= steps; i++) {
-      final t = i / steps;
-      final x = 10 + (size.width - 20) * t;
-      final y = size.height / 2 + (t < 0.5 ? -4 : 4) * (0.5 - (t - 0.5).abs());
-      final half = StrokeGeometry.halfWidthAt(brush, t).clamp(0.4, 14.0);
-      top.add(Offset(x, y - half));
-      bottom.add(Offset(x, y + half));
+    // A real sample stroke, light to heavy pressure, drawn by the same
+    // engine as the canvas - so pencil grain and tilt shading show here too.
+    const steps = 40;
+    final points = <StrokePoint>[
+      for (var i = 0; i <= steps; i++)
+        StrokePoint(
+          Offset(
+            10 + (size.width - 20) * (i / steps),
+            size.height / 2 + math.sin(i / steps * math.pi * 2) * 6,
+          ),
+          i / steps,
+        ),
+    ];
+    if (brush.type.isEraser) {
+      canvas.drawPath(
+        StrokeGeometry.buildOutline(Stroke(brush: brush, points: points)),
+        Paint()..color = InkbookColors.inkSoft.withAlpha(90),
+      );
+    } else {
+      paintStroke(
+        canvas,
+        Stroke(
+          brush: brush.copyWith(size: brush.size.clamp(1.0, 22.0)),
+          points: points,
+        ),
+      );
     }
-    path.addPolygon(<Offset>[...top, ...bottom.reversed], true);
-
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = brush.type.isEraser
-            ? InkbookColors.inkSoft.withAlpha(90)
-            : brush.color.withAlpha((brush.opacity * 255).round()),
-    );
   }
 
   @override

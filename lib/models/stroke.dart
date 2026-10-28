@@ -30,11 +30,16 @@ class StrokePoint {
 }
 
 /// One continuous mark made by the user, from pointer-down to pointer-up.
+///
+/// Strokes are vectors - centre-line points with pressure and tilt, not
+/// pixels - so they can be moved, scaled, rotated and recoloured after the
+/// fact without losing quality.
 class Stroke {
   Stroke({required this.brush, List<StrokePoint>? points})
       : points = points ?? <StrokePoint>[];
 
-  final BrushSettings brush;
+  /// Mutable so a selection can be recoloured or scaled in place.
+  BrushSettings brush;
   final List<StrokePoint> points;
 
   bool get isEraser => brush.type.isEraser;
@@ -60,4 +65,16 @@ class Stroke {
   }
 
   Stroke copy() => Stroke(brush: brush, points: List<StrokePoint>.of(points));
+
+  /// Applies [transform] to every point in place. [sizeScale] scales the
+  /// brush with it, so a resized drawing keeps its proportions.
+  void transformBy(Offset Function(Offset) transform, {double sizeScale = 1}) {
+    for (var i = 0; i < points.length; i++) {
+      final p = points[i];
+      points[i] = StrokePoint(transform(p.offset), p.pressure, tilt: p.tilt);
+    }
+    if (sizeScale != 1) {
+      brush = brush.copyWith(size: (brush.size * sizeScale).clamp(0.3, 400.0));
+    }
+  }
 }

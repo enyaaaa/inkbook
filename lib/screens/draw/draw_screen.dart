@@ -241,7 +241,7 @@ class _DrawScreenState extends State<DrawScreen>
                           RingButton(
                             icon: Icons.layers_clear_outlined,
                             tooltip: 'Clear page',
-                            onTap: controller.canUndo
+                            onTap: controller.hasStrokes
                                 ? controller.clearPage
                                 : null,
                           ),
@@ -272,7 +272,7 @@ class _DrawScreenState extends State<DrawScreen>
                                 value: _share,
                                 child: const Text('Share'),
                               ),
-                              if (controller.canUndo)
+                              if (controller.hasStrokes)
                                 PopupMenuItem<VoidCallback>(
                                   value: controller.clearPage,
                                   child: const Text('Clear page'),
@@ -305,74 +305,103 @@ class _DrawScreenState extends State<DrawScreen>
                           child: Column(
                             children: <Widget>[
                               Expanded(
-                                child: _isBoard
-                                    ? _boardArea(controller)
-                                    : Padding(
-                                        // The whole page, as large as the
-                                        // screen allows - room for the stack of
-                                        // pages peeking out on the right.
-                                        padding: EdgeInsets.fromLTRB(
-                                          wide ? 20 : 8,
-                                          4,
-                                          wide ? 34 : 18,
-                                          6,
-                                        ),
-                                        child: Center(
-                                          child: AspectRatio(
-                                            aspectRatio:
-                                                widget.sketchbook.size.aspect,
-                                            child: _PageStack(
-                                              extraPages:
-                                                  (widget.sketchbook.pageCount -
-                                                          controller.pageIndex -
-                                                          1)
-                                                      .clamp(0, 3),
-                                              child: AnimatedBuilder(
-                                                animation: _flip,
-                                                builder: (context, child) {
-                                                  // Lifts toward the viewer, hinged
-                                                  // on the side it turns from.
-                                                  final angle = _flip.value *
-                                                      1.3 *
-                                                      _flipDirection;
-                                                  return Transform(
-                                                    alignment: _flipDirection >
-                                                            0
-                                                        ? Alignment.centerLeft
-                                                        : Alignment.centerRight,
-                                                    transform:
-                                                        Matrix4.identity()
-                                                          ..setEntry(
-                                                              3, 2, 0.0012)
-                                                          ..rotateY(angle),
-                                                    child: child,
-                                                  );
-                                                },
-                                                child: DecoratedBox(
-                                                  decoration: BoxDecoration(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            4),
-                                                    boxShadow:
-                                                        paperShadow(lift: 1.4),
-                                                  ),
-                                                  child: ClipRRect(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            4),
-                                                    child: DrawingCanvas(
-                                                      controller: controller,
-                                                      paper: widget
-                                                          .sketchbook.paper,
-                                                      repaintKey: _canvasKey,
+                                child: Stack(
+                                  children: <Widget>[
+                                    Positioned.fill(
+                                      child: _isBoard
+                                          ? _boardArea(controller)
+                                          : Padding(
+                                              // The whole page, as large as the
+                                              // screen allows - room for the stack of
+                                              // pages peeking out on the right.
+                                              padding: EdgeInsets.fromLTRB(
+                                                wide ? 20 : 8,
+                                                4,
+                                                wide ? 34 : 18,
+                                                6,
+                                              ),
+                                              child: Center(
+                                                child: AspectRatio(
+                                                  aspectRatio: widget
+                                                      .sketchbook.size.aspect,
+                                                  child: _PageStack(
+                                                    extraPages: (widget
+                                                                .sketchbook
+                                                                .pageCount -
+                                                            controller
+                                                                .pageIndex -
+                                                            1)
+                                                        .clamp(0, 3),
+                                                    child: AnimatedBuilder(
+                                                      animation: _flip,
+                                                      builder:
+                                                          (context, child) {
+                                                        // Lifts toward the viewer, hinged
+                                                        // on the side it turns from.
+                                                        final angle =
+                                                            _flip.value *
+                                                                1.3 *
+                                                                _flipDirection;
+                                                        return Transform(
+                                                          alignment:
+                                                              _flipDirection > 0
+                                                                  ? Alignment
+                                                                      .centerLeft
+                                                                  : Alignment
+                                                                      .centerRight,
+                                                          transform: Matrix4
+                                                              .identity()
+                                                            ..setEntry(
+                                                                3, 2, 0.0012)
+                                                            ..rotateY(angle),
+                                                          child: child,
+                                                        );
+                                                      },
+                                                      child: DecoratedBox(
+                                                        decoration:
+                                                            BoxDecoration(
+                                                          borderRadius:
+                                                              BorderRadius
+                                                                  .circular(4),
+                                                          boxShadow:
+                                                              paperShadow(
+                                                                  lift: 1.4),
+                                                        ),
+                                                        child: ClipRRect(
+                                                          borderRadius:
+                                                              BorderRadius
+                                                                  .circular(4),
+                                                          child: DrawingCanvas(
+                                                            controller:
+                                                                controller,
+                                                            paper: widget
+                                                                .sketchbook
+                                                                .paper,
+                                                            repaintKey:
+                                                                _canvasKey,
+                                                          ),
+                                                        ),
+                                                      ),
                                                     ),
                                                   ),
                                                 ),
                                               ),
                                             ),
-                                          ),
+                                    ),
+                                    // Floats over the canvas so the page
+                                    // never resizes when it appears.
+                                    if (controller.tool == CanvasTool.select &&
+                                        controller.hasSelection)
+                                      Positioned(
+                                        left: 0,
+                                        right: 0,
+                                        bottom: 10,
+                                        child: _SelectionBar(
+                                          controller: controller,
                                         ),
                                       ),
+                                  ],
+                                ),
                               ),
                               if (_isBoard)
                                 _BoardBar(
@@ -386,6 +415,7 @@ class _DrawScreenState extends State<DrawScreen>
                                   pageCount: widget.sketchbook.pageCount,
                                   strokeCount: page?.strokeCount ?? 0,
                                   stylusDetected: controller.stylusDetected,
+                                  inputLabel: controller.inputLabel,
                                   onPrevious: () => _turnPage(-1),
                                   onNext: () => _turnPage(1),
                                   onAdd: () async {
@@ -501,6 +531,90 @@ class _PageStack extends StatelessWidget {
   }
 }
 
+/// Actions for the lasso selection: duplicate, recolour, delete, done.
+class _SelectionBar extends StatelessWidget {
+  const _SelectionBar({required this.controller});
+
+  final SketchbookController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final count = controller.selection.length;
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: InkbookColors.tray,
+          borderRadius: BorderRadius.circular(30),
+          boxShadow: paperShadow(lift: 1),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Text(
+                '$count STROKE${count == 1 ? '' : 'S'}',
+                style: InkbookType.eyebrow(
+                  color: InkbookColors.folderCream.withAlpha(180),
+                ),
+              ),
+            ),
+            RoundAction(
+              icon: Icons.copy_all_outlined,
+              tooltip: 'Duplicate',
+              size: 36,
+              dark: true,
+              onTap: controller.duplicateSelection,
+            ),
+            const SizedBox(width: 6),
+            Tooltip(
+              message: 'Recolour with the current colour',
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: controller.recolourSelection,
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  alignment: Alignment.center,
+                  child: Container(
+                    width: 20,
+                    height: 20,
+                    decoration: BoxDecoration(
+                      color: controller.brush.color,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: InkbookColors.folderCream,
+                        width: 2,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            RoundAction(
+              icon: Icons.delete_outline,
+              tooltip: 'Delete',
+              size: 36,
+              dark: true,
+              onTap: controller.deleteSelection,
+            ),
+            const SizedBox(width: 6),
+            RoundAction(
+              icon: Icons.check,
+              tooltip: 'Done',
+              size: 36,
+              active: true,
+              onTap: controller.clearSelection,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Under the whiteboard: hand tool, zoom out / level / in, reset view.
 class _BoardBar extends StatelessWidget {
   const _BoardBar({
@@ -601,6 +715,7 @@ class _PageBar extends StatelessWidget {
     required this.pageCount,
     required this.strokeCount,
     required this.stylusDetected,
+    required this.inputLabel,
     required this.onPrevious,
     required this.onNext,
     required this.onAdd,
@@ -611,6 +726,9 @@ class _PageBar extends StatelessWidget {
   final int pageCount;
   final int strokeCount;
   final bool stylusDetected;
+
+  /// What the last pointer reported, e.g. "PEN · PRESSURE 0.42".
+  final String inputLabel;
   final VoidCallback onPrevious;
   final VoidCallback onNext;
   final VoidCallback onAdd;
@@ -626,22 +744,27 @@ class _PageBar extends StatelessWidget {
         children: <Widget>[
           Expanded(
             child: Tooltip(
-              message: stylusDetected
-                  ? 'Stylus pressure detected'
-                  : 'No stylus detected - pressure is simulated from speed',
+              message: 'What your pen or mouse is sending. With no real '
+                  'pressure, line weight is simulated from drawing speed.',
               child: Row(
                 children: <Widget>[
                   Icon(
-                    stylusDetected ? Icons.draw : Icons.touch_app_outlined,
+                    inputLabel.contains('PRESSURE ') || stylusDetected
+                        ? Icons.draw
+                        : Icons.touch_app_outlined,
                     size: 14,
-                    color: stylusDetected
+                    color: inputLabel.contains('PRESSURE ')
                         ? InkbookColors.toolYellow
                         : cream.withAlpha(150),
                   ),
                   const SizedBox(width: 6),
                   Flexible(
                     child: Text(
-                      stylusDetected ? 'STYLUS PRESSURE' : 'SIMULATED PRESSURE',
+                      inputLabel.isNotEmpty
+                          ? inputLabel
+                          : (stylusDetected
+                              ? 'STYLUS PRESSURE'
+                              : 'DRAW TO CHECK PRESSURE'),
                       overflow: TextOverflow.ellipsis,
                       style: meta,
                     ),

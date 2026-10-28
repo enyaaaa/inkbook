@@ -7,21 +7,24 @@ import '../models/stroke.dart';
 /// Packs a page's strokes into a compact binary blob for storage, and back.
 ///
 /// JSON would spend ~30 bytes per point on digits and punctuation; this
-/// spends 12 (three float32s), so a busy page stays well under Firestore's
+/// spends 16 (four float32s), so a busy page stays well under Firestore's
 /// 1 MB document limit. Layout, little-endian:
 ///
 ///   u16 version, u32 strokeCount, then per stroke:
 ///     u8 brushType, u32 colour (ARGB), f32 size, f32 opacity,
-///     u32 pointCount, then pointCount x (f32 x, f32 y, f32 pressure)
+///     u32 pointCount, then pointCount x (f32 x, f32 y, f32 pressure,
+///     f32 tilt)
+///
+/// Version 1 (no tilt, 12 bytes per point) is still read.
 class StrokeCodec {
   const StrokeCodec._();
 
-  static const int _version = 1;
+  static const int _version = 2;
 
   static Uint8List encode(List<Stroke> strokes) {
     var length = 2 + 4;
     for (final stroke in strokes) {
-      length += 1 + 4 + 4 + 4 + 4 + stroke.points.length * 12;
+      length += 1 + 4 + 4 + 4 + 4 + stroke.points.length * 16;
     }
     final data = ByteData(length);
     var o = 0;
@@ -45,7 +48,8 @@ class StrokeCodec {
         data.setFloat32(o, p.dx, Endian.little);
         data.setFloat32(o + 4, p.dy, Endian.little);
         data.setFloat32(o + 8, p.pressure, Endian.little);
-        o += 12;
+        data.setFloat32(o + 12, p.tilt, Endian.little);
+        o += 16;
       }
     }
     return data.buffer.asUint8List();
@@ -57,7 +61,8 @@ class StrokeCodec {
     var o = 0;
     final version = data.getUint16(o, Endian.little);
     o += 2;
-    if (version != _version) return <Stroke>[];
+    if (version != 1 && version != 2) return <Stroke>[];
+    final stride = version == 1 ? 12 : 16;
     final count = data.getUint32(o, Endian.little);
     o += 4;
     final strokes = <Stroke>[];
@@ -80,8 +85,9 @@ class StrokeCodec {
             data.getFloat32(o + 4, Endian.little),
           ),
           data.getFloat32(o + 8, Endian.little),
+          tilt: stride == 16 ? data.getFloat32(o + 12, Endian.little) : 0,
         ));
-        o += 12;
+        o += stride;
       }
       strokes.add(Stroke(
         brush: BrushSettings(
