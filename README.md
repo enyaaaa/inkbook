@@ -21,7 +21,7 @@ pressure, and the status bar under the canvas tells you which mode is active.
 
 ## What works
 
-**Core drawing (scope §Core Drawing Features)**
+**Core drawing (scope Core Drawing Features)**
 - Canvas with pressure-sensitive strokes — width *and* opacity respond to
   pressure, with a different response curve per tool
 - Pencil / ink pen / marker / eraser; adjustable size and opacity; 12-colour
@@ -31,19 +31,19 @@ pressure, and the status bar under the canvas tells you which mode is active.
 - Undo / redo (per page) and clear page
 - Palm rejection: once a stylus is seen, touch input stops drawing
 
-**Digital sketchbook (§Digital Sketchbook)**
+**Digital sketchbook (Digital Sketchbook)**
 - Multiple sketchbooks on a shelf, each with its own paper style (plain, dot
   grid, grid, ruled, toned)
 - Multi-page books, add/delete pages, 3D page-turn animation
 - Pages render to PNG for thumbnails, mood-board saves and sharing
 
-**Creative exploration and AI (§Creative Exploration and AI)**
+**Creative exploration and AI (Creative Exploration and AI)**
 - Drawing prompts, shuffleable, grouped by category
 - Step-by-step guides ("how do I draw a hand / face / tree / cat", plus a
   generic construction guide for anything else) with per-step tips
 - "Suggest a next step" — context-aware advice based on what's on the page
 
-**Art community (§Art Community)**
+**Art community (Art Community)**
 - Discover feed, like, artist profiles, follow/unfollow
 - Share a sketchbook page to the feed
 - Personal mood board with collections, saving from the feed or from your own
