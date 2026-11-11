@@ -1,8 +1,7 @@
-# INKBOOK — FYP prototype
+# INKBOOK — FYP
 
 An interactive digital sketchbook for creative expression and exploration.
-Flutter, tablet-first, **zero third-party packages** so it builds and runs
-straight from the Flutter SDK.
+Flutter, tablet-first, builds and runs straight from the Flutter SDK.
 
 ## Run it
 
